@@ -5,7 +5,17 @@
             ["@material-ui/core/Typography" :default Typography]
             ["@material-ui/core/Slider" :default Slider]
             ["face-api.js" :as faceapi]
-            [clojure.core.async :refer [go chan <! >!] :as a]))
+            [clojure.core.async :refer [go go-loop alts! chan <! >! promise-chan] :as a]))
+
+(defn await [p]
+  (let [c (promise-chan)]
+    (.then p #(go (>! c ::complete)))
+    c))
+
+(defn p->c [p]
+  (let [c (promise-chan)]
+    (.then p #(go (>! c %)))
+    c))
 
 (defn get-webcam-stream
   []
@@ -16,15 +26,40 @@
     c))
 
 (def video-reference (atom nil))
+(def analyzer-chan (atom nil))
 
 (defn init-face-api!
   []
-  (let [c (chan)]
-    ))
+  (go
+    (<! (await (.. faceapi -nets -ssdMobilenetv1 (loadFromUri "/"))))
+    (<! (await (.. faceapi (loadFaceLandmarkModel "/"))))
+    (<! (await (.. faceapi (loadFaceExpressionModel "/"))))))
 
+(defn analyze-stream
+  [video-ref results-chan]
+  (let [min-confidence 0.5
+        interval-time 2000]
+    (go-loop []
+      (let [options (new (.-SsdMobilenetv1Options faceapi) #js {:minConfidence min-confidence})
+            timeout-c (a/timeout 1000)
+            [result c] (alts! [(p->c (.. faceapi
+                                         (detectAllFaces video-ref options)
+                                         withFaceExpressions))
+                               timeout-c])]
+        (if (and result (pos? (count result)))
+          (do
+            (let [results (->> result
+                               (filter #(> (.. % -detection -score) min-confidence))
+                               (map (comp first
+                                          #(js->clj % :keywordize-keys true)
+                                          #(.. % -expressions asSortedArray))))]
+              (>! results-chan results))
+            (<! (a/timeout interval-time))
+            (recur))
+          (recur))))))
 
 (defn video
-  []
+  [results-chan]
   [:video {:id "inputVideo"
            :auto-play true
            :muted true
@@ -33,32 +68,47 @@
                   (if ref
                     (do
                       (reset! video-reference ref)
-                      (init-face-api!)
                       (go
                         (let [webcam-stream (<! (get-webcam-stream))]
-                          (set! (.-srcObject ref) webcam-stream))))
-                    (do (.stop (aget (.. @video-reference -srcObject getTracks) 0))
-                        (set! (.-srcObject @video-reference) nil))))}])
+                          (set! (.-srcObject ref) webcam-stream)
+                          (reset! analyzer-chan (analyze-stream ref results-chan)))))
+                    (when @video-reference
+                      (when @analyzer-chan
+                        (a/close! @analyzer-chan))
+                      (.stop (aget (.. @video-reference -srcObject getTracks) 0))
+                      (set! (.-srcObject @video-reference) nil))))}])
+
+(defn expression-display
+  [expression-atom]
+  [:div
+   [:ol
+    (doall
+      (for [[{:keys [expression probability]} idx] (map vector @expression-atom (range))]
+        [:li {:key (str idx)}
+         [:span
+          [:h3 expression]
+          [:p probability]]]))]])
 
 (defn app
   []
-  (let [show? (r/atom false)]
+  (init-face-api!)
+  (let [show? (r/atom false)
+        expression-state (r/atom nil)
+        expressions-chan (chan)
+        _ (go-loop []
+            (let [analysis (<! expressions-chan)]
+              (reset! expression-state analysis)
+              (recur)))]
     (fn []
       [:div.container {:style {:width "75vw"
                                :margin "auto"}}
        [:h1 "Faces"]
        [:div
         (when @show?
-          [video])]
+          [:div
+           [video expressions-chan]
+           [expression-display expression-state]])]
        [:> ButtonGroup {:variant "contained" :color "primary"}
-        [:> Button
-         {:variant "contained"
-          :color "primary"}
-         "Button"]
-        [:> Button
-         {:variant "contained"
-          :color "primary"}
-         "Button 2"]
         [:> Button
          {:variant "contained"
           :color "primary"
