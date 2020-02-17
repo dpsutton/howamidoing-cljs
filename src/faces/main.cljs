@@ -8,6 +8,8 @@
             ["victory" :refer [VictoryBar VictoryChart VictoryPie] :as V]
             [clojure.core.async :refer [go go-loop alts! chan <! >! promise-chan] :as a]))
 
+;; async helpers
+
 (defn await [p]
   (let [c (promise-chan)]
     (.then p #(go (>! c ::complete)))
@@ -18,16 +20,11 @@
     (.then p #(go (>! c %)))
     c))
 
-(defn get-webcam-stream
-  []
-  (let [c (chan)]
-    (-> (.. js/navigator -mediaDevices (getUserMedia (clj->js {:audio false
-                                                               :video {:facing-mode "user"}})))
-        (.then #(go (>! c %))))
-    c))
-
 (def video-reference (atom nil))
+(def overlay-reference (atom nil))
 (def analyzer-chan (atom nil))
+(def state (r/atom {:show? false
+                    :outlines? false}))
 
 (defn init-face-api!
   []
@@ -35,6 +32,14 @@
     (<! (await (.. faceapi -nets -ssdMobilenetv1 (loadFromUri "/"))))
     (<! (await (.. faceapi (loadFaceLandmarkModel "/"))))
     (<! (await (.. faceapi (loadFaceExpressionModel "/"))))))
+
+(defn get-webcam-stream
+  []
+  (let [c (chan)]
+    (-> (.. js/navigator -mediaDevices (getUserMedia (clj->js {:audio false
+                                                               :video {:facing-mode "user"}})))
+        (.then #(go (>! c %))))
+    c))
 
 (defn analyze-stream
   [video-ref results-chan]
@@ -54,6 +59,11 @@
                                           #(js->clj % :keywordize-keys true)
                                           #(.. % -expressions asSortedArray))))]
               (>! results-chan results))
+            (when (and @overlay-reference (:outlines? @state))
+              (let [dims (.matchDimensions faceapi @overlay-reference video-ref true)
+                    resizedResult (.resizeResults faceapi result dims)]
+                (.. faceapi -draw (drawDetections @overlay-reference resizedResult))
+                (.. faceapi -draw (drawFaceExpressions @overlay-reference resizedResult 0.5))))
             (recur))
           (recur))))))
 
@@ -105,15 +115,22 @@
                                              inc))
                                    {:good 0 :bad 0}
                                    @state)]
-    [:div
+    [:div {:style {:margin-top "20px"}}
      [:h4 (str "Good: " good)]
      [:h4 (str "Bad: " bad)]]))
+
+(defn overlay
+  [state]
+  [:canvas#overlay
+   {:style {:position "absolute"
+            :visibility (if (:outlines? @state) "visible" "hidden")
+            :top 0 :left 0 :width "100%" :height "100%"}
+    :ref (fn [ref] (reset! overlay-reference ref))}])
 
 (defn app
   []
   (init-face-api!)
-  (let [show? (r/atom false)
-        expression-state (r/atom nil)
+  (let [expression-state (r/atom nil)
         expressions-chan (chan)
         _ (go-loop []
             (let [analysis (<! expressions-chan)]
@@ -126,23 +143,36 @@
        [:div {:style {:display :flex
                       :align-items "center"}}
         [:div {:style {:width 640
-                       :height 585}}
-         (when @show?
+                       :height 485
+                       :position "relative"}}
+         (when (:show? @state)
            [:div
             [video expressions-chan]
+            [overlay state expression-state]
             [summary expression-state]])]
         [:div {:style {:width 400
                        :height 400}}
          [chart expression-state]]]
-       [:> ButtonGroup {:variant "contained" :color "primary"}
+       [:> ButtonGroup {:style {:margin-top "85px"}
+                        :variant "contained" :color "primary"}
         [:> Button
          {:variant "contained"
           :color "primary"
           :on-click #(do
-                       (when @show?
+                       (when (:show? @state)
                          (stop-video!))
-                       (swap! show? not))}
-         (str "Turn " (if @show? "off" "on"))]]])))
+                       (swap! state update :show? not))}
+         (str "Turn " (if (:show? @state) "off" "on"))]
+        [:> Button
+         {:variant "contained"
+          :color "primary"
+          :on-click #(swap! state assoc :outlines? true)}
+         "Show outlines"]
+        [:> Button
+         {:variant "contained"
+          :color "primary"
+          :on-click #(swap! state assoc :outlines? false)}
+         "Hide outlines"]]])))
 
 (defn ^:dev/after-load start
   []
