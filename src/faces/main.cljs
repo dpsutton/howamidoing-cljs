@@ -5,6 +5,7 @@
             ["@material-ui/core/Typography" :default Typography]
             ["@material-ui/core/Slider" :default Slider]
             ["face-api.js" :as faceapi]
+            ["victory" :refer [VictoryBar VictoryChart VictoryPie] :as V]
             [clojure.core.async :refer [go go-loop alts! chan <! >! promise-chan] :as a]))
 
 (defn await [p]
@@ -37,8 +38,7 @@
 
 (defn analyze-stream
   [video-ref results-chan]
-  (let [min-confidence 0.5
-        interval-time 2000]
+  (let [min-confidence 0.5]
     (go-loop []
       (let [options (new (.-SsdMobilenetv1Options faceapi) #js {:minConfidence min-confidence})
             timeout-c (a/timeout 1000)
@@ -54,7 +54,6 @@
                                           #(js->clj % :keywordize-keys true)
                                           #(.. % -expressions asSortedArray))))]
               (>! results-chan results))
-            (<! (a/timeout interval-time))
             (recur))
           (recur))))))
 
@@ -78,16 +77,17 @@
                       (.stop (aget (.. @video-reference -srcObject getTracks) 0))
                       (set! (.-srcObject @video-reference) nil))))}])
 
-(defn expression-display
-  [expression-atom]
-  [:div
-   [:ol
-    (doall
-      (for [[{:keys [expression probability]} idx] (map vector @expression-atom (range))]
-        [:li {:key (str idx)}
-         [:span
-          [:h3 expression]
-          [:p probability]]]))]])
+(defn chart
+  [expression-state]
+  (let [data (->> @expression-state (map :expression) frequencies)]
+    [:> VictoryPie {:data (clj->js (into []
+                                         (map (fn [[k cnt]]
+                                                {:x k :y cnt}))
+                                         data))
+                    :style (clj->js {:labels {:fontSize 20
+                                              :fontWeight "bold"}})
+                    :colorScale ["#029832", "#62b32b", "#C7EA46", "#fedb00", "#f97a00", "#ff5349", "#d50218"]
+                    :animate #js{:duration 200}}]))
 
 (defn app
   []
@@ -103,11 +103,16 @@
       [:div.container {:style {:width "75vw"
                                :margin "auto"}}
        [:h1 "Faces"]
-       [:div
-        (when @show?
-          [:div
-           [video expressions-chan]
-           [expression-display expression-state]])]
+       [:div {:style {:display :flex
+                      :align-items "center"}}
+        [:div {:style {:width 640
+                       :height 485}}
+         (when @show?
+           [:div
+            [video expressions-chan]])]
+        [:div {:style {:width 400
+                       :height 400}}
+         [chart expression-state]]]
        [:> ButtonGroup {:variant "contained" :color "primary"}
         [:> Button
          {:variant "contained"
