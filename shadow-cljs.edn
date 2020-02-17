@@ -3,7 +3,8 @@
         :modules {:main {:init-fn faces.main/init}}
         :output-dir "public/js"
         :target :browser}}
- :dependencies [[reagent "0.9.1" :exclusions [cljsjs/react cljsjs/react-dom cljsjs/react-dom-server]]
+ :dependencies [[reagent "0.9.1"
+                 :exclusions [cljsjs/react cljsjs/react-dom cljsjs/react-dom-server]]
                 [org.clojure/core.async "0.6.532"]]
  :dev-http {3000 "public"}
  :source-paths ["src"]}
