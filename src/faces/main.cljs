@@ -60,6 +60,9 @@
                                (map (comp first
                                           #(js->clj % :keywordize-keys true)
                                           #(.. % -expressions asSortedArray))))]
+              ;; put simplified results onto results chan for others
+              ;; (chart, good/bad counts) and the raw results onto the
+              ;; overlay chan to draw boxes if desired
               (>! results-chan results)
               (>! overlay-chan result))
             (recur))
