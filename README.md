@@ -1,6 +1,6 @@
 ## Clone of enjoyingthe.show in CLJS
 
-This is a clone of [enjoyingthe.show](enjoyingthe.show) from Gant Laborde [github](https://github.com/GantMan/howamidoing).
+This is a clone of [enjoyingthe.show](https://enjoyingthe.show/) from Gant Laborde [github](https://github.com/GantMan/howamidoing).
 
 ## To run
 
