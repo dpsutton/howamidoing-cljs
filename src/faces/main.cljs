@@ -39,11 +39,9 @@
 
 (defn get-webcam-stream
   []
-  (let [c (chan)]
-    (-> (.. js/navigator -mediaDevices (getUserMedia (clj->js {:audio false
-                                                               :video {:facing-mode "user"}})))
-        (.then #(go (>! c %))))
-    c))
+  (p->c (.. js/navigator -mediaDevices
+            (getUserMedia (clj->js {:audio false
+                                    :video {:facing-mode "user"}})))))
 
 (defn analyze-stream
   [video-ref results-chan overlay-chan]
