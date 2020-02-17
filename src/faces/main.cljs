@@ -3,6 +3,7 @@
             ["@material-ui/core/Button" :default Button]
             ["@material-ui/core/ButtonGroup" :default ButtonGroup]
             ["@material-ui/core/Typography" :default Typography]
+            ["@material-ui/core/LinearProgress" :default LinearProgress]
             ["@material-ui/core/Slider" :default Slider]
             ["face-api.js" :as faceapi]
             ["victory" :refer [VictoryBar VictoryChart VictoryPie] :as V]
@@ -25,14 +26,16 @@
 (def video-reference (atom nil))
 (def analyzer-chan (atom nil))
 (def state (r/atom {:show? false
-                    :outlines? false}))
+                    :outlines? false
+                    :loaded? false}))
 
 (defn init-face-api!
-  []
+  [on-complete]
   (go
     (<! (await (.. faceapi -nets -ssdMobilenetv1 (loadFromUri "/"))))
     (<! (await (.. faceapi (loadFaceLandmarkModel "/"))))
-    (<! (await (.. faceapi (loadFaceExpressionModel "/"))))))
+    (<! (await (.. faceapi (loadFaceExpressionModel "/"))))
+    (on-complete)))
 
 (defn get-webcam-stream
   []
@@ -141,7 +144,6 @@
 
 (defn app
   []
-  (init-face-api!)
   (let [expression-state (r/atom nil)
         expressions-chan (chan)
         overlay-chan (chan (a/sliding-buffer 1))
@@ -149,9 +151,12 @@
             (let [analysis (<! expressions-chan)]
               (reset! expression-state analysis)
               (recur)))]
+    (init-face-api! #(swap! state assoc :loaded? true))
     (fn []
       [:div.container {:style {:width "75vw"
                                :margin "auto"}}
+       (when-not (:loaded? @state)
+        [:> LinearProgress])
        [:h1 "Faces"]
        [:div {:style {:display :flex
                       :align-items "center"}}
