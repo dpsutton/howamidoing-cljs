@@ -20,8 +20,9 @@
     (.then p #(go (>! c %)))
     c))
 
+;; state
+
 (def video-reference (atom nil))
-(def overlay-reference (atom nil))
 (def analyzer-chan (atom nil))
 (def state (r/atom {:show? false
                     :outlines? false}))
@@ -42,7 +43,7 @@
     c))
 
 (defn analyze-stream
-  [video-ref results-chan]
+  [video-ref results-chan overlay-chan]
   (let [min-confidence 0.5]
     (go-loop []
       (let [options (new (.-SsdMobilenetv1Options faceapi) #js {:minConfidence min-confidence})
@@ -58,12 +59,8 @@
                                (map (comp first
                                           #(js->clj % :keywordize-keys true)
                                           #(.. % -expressions asSortedArray))))]
-              (>! results-chan results))
-            (when (and @overlay-reference (:outlines? @state))
-              (let [dims (.matchDimensions faceapi @overlay-reference video-ref true)
-                    resizedResult (.resizeResults faceapi result dims)]
-                (.. faceapi -draw (drawDetections @overlay-reference resizedResult))
-                (.. faceapi -draw (drawFaceExpressions @overlay-reference resizedResult 0.5))))
+              (>! results-chan results)
+              (>! overlay-chan result))
             (recur))
           (recur))))))
 
@@ -74,7 +71,7 @@
     (catch :default _)))
 
 (defn video
-  [results-chan]
+  [results-chan overlay-chan]
   [:video {:id "inputVideo"
            :auto-play true
            :muted true
@@ -86,7 +83,7 @@
                       (go
                         (let [webcam-stream (<! (get-webcam-stream))]
                           (set! (.-srcObject ref) webcam-stream)
-                          (reset! analyzer-chan (analyze-stream ref results-chan)))))
+                          (reset! analyzer-chan (analyze-stream ref results-chan overlay-chan)))))
                     (when @video-reference
                       (when @analyzer-chan
                         (a/close! @analyzer-chan))
@@ -120,18 +117,34 @@
      [:h4 (str "Bad: " bad)]]))
 
 (defn overlay
-  [state]
-  [:canvas#overlay
-   {:style {:position "absolute"
-            :visibility (if (:outlines? @state) "visible" "hidden")
-            :top 0 :left 0 :width "100%" :height "100%"}
-    :ref (fn [ref] (reset! overlay-reference ref))}])
+  [state overlay-chan]
+  (let [overlay-reference (atom nil)
+        worker (go-loop []
+                 (let [faces (<! overlay-chan)]
+                   (when (and @overlay-reference (:outlines? @state))
+                     (let [dims (.matchDimensions faceapi @overlay-reference @video-reference true)
+                           resizedResult (.resizeResults faceapi faces dims)]
+                       (.. faceapi -draw (drawDetections @overlay-reference resizedResult))
+                       (.. faceapi -draw (drawFaceExpressions @overlay-reference resizedResult 0.5))))
+                   (recur)))]
+    (r/create-class
+      {:reagent-render
+       (fn [state _]
+         [:canvas#overlay
+          {:style {:position "absolute"
+                   :visibility (if (:outlines? @state) "visible" "hidden")
+                   :top 0 :left 0 :width "100%" :height "100%"}
+           :ref (fn [ref] (reset! overlay-reference ref))}])
+       :component-will-unmount
+       (fn [_]
+         (a/close! worker))})))
 
 (defn app
   []
   (init-face-api!)
   (let [expression-state (r/atom nil)
         expressions-chan (chan)
+        overlay-chan (chan (a/sliding-buffer 1))
         _ (go-loop []
             (let [analysis (<! expressions-chan)]
               (reset! expression-state analysis)
@@ -147,8 +160,8 @@
                        :position "relative"}}
          (when (:show? @state)
            [:div
-            [video expressions-chan]
-            [overlay state expression-state]
+            [video expressions-chan overlay-chan]
+            [overlay state overlay-chan]
             [summary expression-state]])]
         [:div {:style {:width 400
                        :height 400}}
