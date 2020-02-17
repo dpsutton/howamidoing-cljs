@@ -57,6 +57,12 @@
             (recur))
           (recur))))))
 
+(defn stop-video!
+  []
+  (try
+    (.stop (aget (.. @video-reference -srcObject getTracks) 0))
+    (catch :default _)))
+
 (defn video
   [results-chan]
   [:video {:id "inputVideo"
@@ -74,7 +80,7 @@
                     (when @video-reference
                       (when @analyzer-chan
                         (a/close! @analyzer-chan))
-                      (.stop (aget (.. @video-reference -srcObject getTracks) 0))
+                      (stop-video!)
                       (set! (.-srcObject @video-reference) nil))))}])
 
 (defn chart
@@ -88,6 +94,20 @@
                                               :fontWeight "bold"}})
                     :colorScale ["#029832", "#62b32b", "#C7EA46", "#fedb00", "#f97a00", "#ff5349", "#d50218"]
                     :animate #js{:duration 200}}]))
+
+(defn summary
+  [state]
+  (let [{:keys [good bad]} (reduce (fn [s {:keys [expression]}]
+                                     (update s
+                                             (if (#{"happy" "neutral" "surprised"} expression)
+                                               :good
+                                               :bad)
+                                             inc))
+                                   {:good 0 :bad 0}
+                                   @state)]
+    [:div
+     [:h4 (str "Good: " good)]
+     [:h4 (str "Bad: " bad)]]))
 
 (defn app
   []
@@ -106,10 +126,11 @@
        [:div {:style {:display :flex
                       :align-items "center"}}
         [:div {:style {:width 640
-                       :height 485}}
+                       :height 585}}
          (when @show?
            [:div
-            [video expressions-chan]])]
+            [video expressions-chan]
+            [summary expression-state]])]
         [:div {:style {:width 400
                        :height 400}}
          [chart expression-state]]]
@@ -117,7 +138,10 @@
         [:> Button
          {:variant "contained"
           :color "primary"
-          :on-click #(swap! show? not)}
+          :on-click #(do
+                       (when @show?
+                         (stop-video!))
+                       (swap! show? not))}
          (str "Turn " (if @show? "off" "on"))]]])))
 
 (defn ^:dev/after-load start
